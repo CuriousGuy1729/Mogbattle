@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GameSocket } from "@/lib/client/wsClient";
 import type { BattleMode, PublicPlayer, ServerMsg } from "@/server/protocol";
 import { MeshRTC, type SignalPayload } from "@/lib/client/webrtc";
-import { FaceSampler } from "@/lib/client/face";
+import { createSampler } from "@/lib/client/engine";
 import { buildAttestation, collectNeutralCapture } from "@/lib/client/attest";
 import { api } from "@/lib/client/session";
 import { Badge, CountUp, Modal } from "./ui";
@@ -145,7 +145,7 @@ export default function BattleRoom({
       const video = localVideoRef.current;
       if (!t || !video) return;
       const budget = Math.max(2500, t.captureEnd - socket.now() - 400);
-      const sampler = new FaceSampler(video);
+      const { sampler } = await createSampler(video);
       const capture = await collectNeutralCapture(sampler, {
         targetFrames: 16,
         maxMs: budget,

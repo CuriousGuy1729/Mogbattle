@@ -38,6 +38,22 @@ export default function MethodologyPage() {
         </p>
       </Section>
 
+      <Section title="Perception engine (open-source, on-device)">
+        <p>
+          Facial geometry is extracted by <strong className="text-white">@vladmandic/human</strong> — the
+          MIT-licensed, actively maintained TensorFlow.js face-analysis engine (successor of face-api.js).
+          It runs entirely in your browser: BlazeFace detection, a 468-point face mesh plus 10 iris points,
+          true 3D head rotation (pitch/yaw/roll), and built-in <strong className="text-white">liveness</strong> and{" "}
+          <strong className="text-white">anti-spoof</strong> confidence models.
+        </p>
+        <p className="mt-2">
+          The engine only <em>measures</em>. The score itself never comes from the engine or from any neural
+          rating — it is computed by the pinned deterministic pipeline below. If the engine cannot initialize
+          on a device, the platform transparently falls back to the MediaPipe FaceLandmarker engine; both
+          produce the same 478-point topology the scoring layer consumes.
+        </p>
+      </Section>
+
       <Section title="Pipeline (deterministic, no black box)">
         <ol className="list-decimal space-y-2 pl-5">
           <li><strong className="text-white">Capture.</strong> 18 video frames that pass all quality gates (frontal pose, lighting, sharpness, single face).</li>
@@ -125,7 +141,7 @@ export default function MethodologyPage() {
 
       <Section title="Privacy">
         <ul className="list-disc space-y-1 pl-5">
-          <li>All face processing runs on-device (MediaPipe FaceLandmarker). No images or video are transmitted or stored.</li>
+          <li>All face processing runs on-device (@vladmandic/human engine, MediaPipe fallback). No images or video are transmitted or stored.</li>
           <li>Stored: score components, quality metrics, model version, and a one-way capture digest. The digest cannot be reversed into a face.</li>
           <li>Biometric templates are never exposed publicly and never shared between players.</li>
         </ul>

@@ -1,6 +1,8 @@
 "use client";
 /**
- * On-device face landmark + capture-quality sampler.
+ * On-device face landmark + capture-quality sampler (MediaPipe engine).
+ * This is also the FALLBACK engine when the primary open-source engine
+ * (@vladmandic/human, see engine.ts) cannot initialize.
  * Everything runs in the browser — no video frame ever leaves the device.
  */
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
@@ -44,16 +46,6 @@ export interface FrameSample {
   gateFails: string[];
 }
 
-/**
- * Image-quality analysis on a small canvas.
- * - brightness / contrast: mean & std-dev of luminance over the face crop
- * - sharpness: Laplacian variance on a 96×96 grayscale face crop
- *   (blur / out-of-focus / heavily compressed replay footage scores low)
- *
- * NOTE: the crop is drawn directly from the video element. `drawImage` does
- * NOT accept ImageData — drawing from getImageData output crashes with
- * "The provided value is not of type CanvasImageSource".
- */
 function analyzeCrop(
   ctx: CanvasRenderingContext2D,
   video: HTMLVideoElement,
@@ -124,11 +116,6 @@ export class FaceSampler {
       gateFails: ["no camera frame"],
     };
     if (!this.video || this.video.readyState < 2 || this.video.videoWidth === 0) return fail;
-
-    // Freeze-frame dedupe: MediaPipe requires a fresh frame timestamp.
-    if (this.video.currentTime === this.lastVideoTime) {
-      // Same frame; still run detection once per JS tick max.
-    }
     this.lastVideoTime = this.video.currentTime;
 
     const landmarker = await loadFaceLandmarker();
@@ -139,6 +126,35 @@ export class FaceSampler {
       return { ...fail, faceCount, gateFails: [faceCount === 0 ? "no face detected" : faceCount > 1 ? "multiple faces in frame" : "incomplete landmark set"] };
     }
     const lm: Landmarks = faces[0].map((p) => ({ x: p.x, y: p.y, z: p.z }));
+    return (await this.sampleFromLandmarks(lm)) ?? { ...fail, faceCount };
+  }
+
+  /**
+   * Shared capture-quality analysis from any 478-point constellation —
+   * used by both the MediaPipe sampler and the Human engine adapter.
+   * Image-quality metrics:
+   *  - brightness / contrast: mean & std-dev of luminance over the face crop
+   *  - sharpness: Laplacian variance on a 96×96 face crop (blur, missed focus
+   *    and compressed replay footage all score low)
+   * The crop is drawn directly from the video element — `drawImage` does NOT
+   * accept ImageData (that crashes with "not of type CanvasImageSource").
+   */
+  async sampleFromLandmarks(lm: Landmarks): Promise<FrameSample | null> {
+    const fail: FrameSample = {
+      ok: false,
+      faceCount: 1,
+      landmarks: null,
+      yawDeg: 0,
+      rollDeg: 0,
+      ear: 0,
+      brightness: 0,
+      contrast: 0,
+      sharpness: 0,
+      faceWidthRatio: 0,
+      gated: false,
+      gateFails: ["no camera frame"],
+    };
+    if (!this.video || this.video.videoWidth === 0) return null;
 
     const pose = estimateHeadPose(lm);
     const ear = eyeAspectToRatio(lm);
@@ -169,7 +185,7 @@ export class FaceSampler {
     try {
       ({ brightness, contrast, sharpness } = analyzeCrop(this.ctx, this.video, box));
     } catch {
-      return { ...fail, faceCount, landmarks: lm, gateFails: ["canvas blocked"] };
+      return { ...fail, landmarks: lm, gateFails: ["canvas blocked"] };
     }
 
     const gateFails: string[] = [];
@@ -183,7 +199,7 @@ export class FaceSampler {
 
     return {
       ok: true,
-      faceCount,
+      faceCount: 1,
       landmarks: lm,
       yawDeg: pose.yawDeg,
       rollDeg: pose.rollDeg,

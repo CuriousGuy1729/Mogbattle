@@ -18,11 +18,15 @@ WebRTC with honest Elo.
    (shuffled) → neutral. Per-challenge evidence (yaw traces, EAR blink dip,
    face presence, timing) is validated server-side. Screenshots, static
    photos and replayed clips fail these checks.
-3. **On-device scoring** — MediaPipe FaceLandmarker runs fully in the
-   browser. Stabilized landmarks are normalized (distance / roll /
-   translation), 13 dimensionless metrics + a symmetry index are measured,
-   standardized against pinned references, weighted into a **PSL /10** with
-   an explicit confidence. Below the confidence threshold → rescan, no guess.
+3. **On-device scoring** — the MIT-licensed **@vladmandic/human** engine
+   (TensorFlow.js; successor of face-api.js) extracts a 468+10 iris-point
+   mesh, true 3D head rotation, and built-in liveness / anti-spoof
+   confidence — fully in the browser, with MediaPipe FaceLandmarker as the
+   automatic fallback engine. Stabilized landmarks are normalized
+   (distance / roll / translation), 13 dimensionless metrics + a symmetry
+   index are measured, standardized against pinned references, weighted
+   into a **PSL /10** with an explicit confidence. Below the confidence
+   threshold → rescan, no guess.
 4. **Randomized matchmaking** — Ranked 1v1, Casual 1v1, Random Duo 2v2 and
    Friend Challenge. Every queue requires a certified scan.
 5. **Synchronized battle** — server-clock countdown, 6-second capture window,
@@ -56,7 +60,7 @@ See `/methodology` in-app for the full component table and honesty statement.
 | UI | Tailwind CSS, custom animation system |
 | Realtime | WebSockets (signaling, matchmaking, clock sync) |
 | Video | Peer-to-peer WebRTC (full mesh for Duo) |
-| Face analysis | MediaPipe FaceLandmarker (on-device) |
+| Face analysis | @vladmandic/human engine (on-device, mesh + liveness + anti-spoof); MediaPipe fallback |
 | Storage | PostgreSQL (`pg`) — embedded JSON store fallback |
 | Cache/limits | Redis (`ioredis`) — in-memory fallback |
 

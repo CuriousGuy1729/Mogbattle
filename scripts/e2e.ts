@@ -266,6 +266,51 @@ async function main() {
   c1.send({ t: "queue_leave" });
   c2.send({ t: "queue_leave" });
 
+  // 6b. batch matchmaking — every waiting player pairs within one tick window
+  {
+    const toks = await Promise.all([...Array(4)].map(() => jpost("/api/session", {})));
+    if (toks.some((s) => s.status !== 200)) { fail("batch sessions", toks); return; }
+    const batch = toks.map((s, i) => new Client(`D${i}`, s.data.token as string));
+    await Promise.all(batch.map((c) => c.connect()));
+    for (const c of batch) c.send({ t: "queue_join", mode: "ranked" });
+    const found = await Promise.all(batch.map((c) => c.waitFor("match_found", 12000).catch(() => null)));
+    const roomIds = new Set(found.map((m) => m && (m as { matchId?: string }).matchId).filter(Boolean));
+    if (found.every(Boolean) && roomIds.size === 2 && (found[0] as { players: unknown[] }).players.length === 2)
+      ok("batch matchmaking: 4 queued ranked players → 2 simultaneous matches");
+    else fail("batch matchmaking", found);
+    for (const c of batch) c.close();
+  }
+
+  // 6c. random duo — 4 solo joiners auto-team into one 2v2 battle
+  {
+    const toks = await Promise.all([...Array(4)].map(() => jpost("/api/session", {})));
+    if (toks.some((s) => s.status !== 200)) { fail("duo sessions", toks); return; }
+    const duo = toks.map((s, i) => new Client(`U${i}`, s.data.token as string));
+    await Promise.all(duo.map((c) => c.connect()));
+    for (const c of duo) c.send({ t: "queue_join", mode: "duo" });
+    const found = await Promise.all(duo.map((c) => c.waitFor("match_found", 12000).catch(() => null)));
+    if (found.every(Boolean) && (found[0] as { players: unknown[] }).players.length === 4)
+      ok("random duo: 4 queued players auto-teamed into one 2v2 battle");
+    else fail("duo matchmaking", found);
+    for (const c of duo) c.close();
+  }
+
+  // 6d. stress: 10 players queue duo → multiple simultaneous 2v2 battles
+  {
+    const toks = await Promise.all([...Array(10)].map(() => jpost("/api/session", {})));
+    if (toks.some((s) => s.status !== 200)) { fail("duo stress sessions", toks); return; }
+    const many = toks.map((s, i) => new Client(`S${i}`, s.data.token as string));
+    await Promise.all(many.map((c) => c.connect()));
+    for (const c of many) c.send({ t: "queue_join", mode: "duo" });
+    const found = await Promise.all(many.map((c) => c.waitFor("match_found", 12000).catch(() => null)));
+    const matched = found.filter(Boolean);
+    const rooms = new Set(matched.map((m) => (m as { matchId?: string }).matchId));
+    if (matched.length === 8 && rooms.size === 2 && matched.every((m) => (m as { players: unknown[] }).players.length === 4))
+      ok("duo stress: 10 queued → two simultaneous 2v2 battles (2 keep waiting)");
+    else fail("duo stress", { matched: matched.length, rooms: rooms.size });
+    for (const c of many) c.close();
+  }
+
   // 7. leaderboards + profile reflect the match
   const lb = await jget("/api/leaderboard?board=global");
   const weekly = await jget("/api/leaderboard?board=weekly");

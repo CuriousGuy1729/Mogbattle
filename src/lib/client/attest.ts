@@ -11,7 +11,8 @@ import type { BattleAttestation, CaptureQuality, Landmarks, PslResult } from "@/
 import { alignFace, stabilizeFrames } from "@/lib/psl/geometry";
 import { captureDigest, componentsFromResult, computePsl } from "@/lib/psl/score";
 import { FRAME_GATES } from "@/lib/psl/version";
-import type { FrameSample, FaceSampler } from "./face";
+import type { FrameSample } from "./face";
+import type { Sampler } from "./engine";
 
 export interface NeutralCapture {
   frames: Landmarks[];
@@ -28,7 +29,7 @@ export type CaptureOutcome =
  * concrete remediation hint instead of emitting a fake score.
  */
 export async function collectNeutralCapture(
-  sampler: FaceSampler,
+  sampler: Sampler,
   opts: { targetFrames?: number; maxMs?: number; onProgress?: (have: number, need: number) => void } = {}
 ): Promise<NeutralCapture | { error: string; hint: string }> {
   const target = opts.targetFrames ?? 18;

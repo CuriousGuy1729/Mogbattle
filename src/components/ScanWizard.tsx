@@ -7,7 +7,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client/session";
-import { FaceSampler, loadFaceLandmarker, openCamera } from "@/lib/client/face";
+import { loadFaceLandmarker, openCamera } from "@/lib/client/face";
+import { createSampler } from "@/lib/client/engine";
 import { CHALLENGE_UI, LivenessRunner } from "@/lib/client/liveness";
 import { buildAttestation, collectNeutralCapture } from "@/lib/client/attest";
 import type { ChallengeId } from "@/server/scanSessions";
@@ -55,6 +56,7 @@ export default function ScanWizard({
   const [liveIssue, setLiveIssue] = useState<string | null>(null);
   const [capturePct, setCapturePct] = useState(0);
   const [failReason, setFailReason] = useState<{ reason: string; rescan: boolean } | null>(null);
+  const [engine, setEngine] = useState<"human" | "mediapipe" | null>(null);
 
   const cleanup = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -108,7 +110,8 @@ export default function ScanWizard({
     const video = videoRef.current;
     const runner = runnerRef.current;
     if (!video || !runner) return;
-    const sampler = new FaceSampler(video);
+    const { sampler, engine: engineUsed } = await createSampler(video);
+    setEngine(engineUsed);
 
     while (!runner.done && !runner.failed && phaseRef.current === "challenges") {
       const s = await sampler.sample();
@@ -271,10 +274,14 @@ export default function ScanWizard({
             <QualityBar label={liveIssue ? `Issue: ${liveIssue}` : "Frame quality OK"} value={liveIssue ? 0.25 : 1} display={liveIssue ? "fix" : "pass"} />
             <QualityBar label="Liveness sequence" value={steps.length ? (stepIndex + progress) / steps.length : 0} />
           </div>
-          <p className="text-[11px] leading-relaxed text-white/35">
-            Randomized challenge order + timing validation + single-face gate + quality gates protect every scan.
-            Screenshots, static photos and replayed clips fail these checks.
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] leading-relaxed text-white/35">
+              Randomized challenge order + timing validation + single-face gate + quality gates protect every scan.
+            </p>
+            {engine && (
+              <Badge tone="cyan">{engine === "human" ? "engine: human" : "engine: mediapipe"}</Badge>
+            )}
+          </div>
         </div>
       )}
     </div>

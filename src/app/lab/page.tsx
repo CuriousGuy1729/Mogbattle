@@ -5,7 +5,8 @@
  * computed fully on-device and never submitted or stored.
  */
 import { useEffect, useRef, useState } from "react";
-import { FaceSampler, openCamera } from "@/lib/client/face";
+import { openCamera } from "@/lib/client/face";
+import { createSampler, type EngineExtras } from "@/lib/client/engine";
 import { buildAttestation, collectNeutralCapture } from "@/lib/client/attest";
 import { QualityBar, Badge } from "@/components/ui";
 import type { PslResult } from "@/lib/psl/types";
@@ -20,6 +21,7 @@ interface Diagnostics {
   sharpness: number;
   faceWidthRatio: number;
   gateFails: string[];
+  extras: Partial<EngineExtras>;
 }
 
 export default function LabPage() {
@@ -31,6 +33,7 @@ export default function LabPage() {
   const [testResult, setTestResult] = useState<PslResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [camError, setCamError] = useState<string | null>(null);
+  const [engineName, setEngineName] = useState<"human" | "mediapipe" | null>(null);
 
   useEffect(() => {
     if (!running) return;
@@ -42,7 +45,8 @@ export default function LabPage() {
         const video = videoRef.current!;
         video.srcObject = stream;
         await video.play();
-        const sampler = new FaceSampler(video);
+        const { sampler, engine } = await createSampler(video);
+        setEngineName(engine);
         while (alive) {
           const s = await sampler.sample();
           if (!alive) break;
@@ -56,6 +60,16 @@ export default function LabPage() {
             sharpness: s.sharpness,
             faceWidthRatio: s.faceWidthRatio,
             gateFails: s.gateFails,
+            extras: {
+              engine: s.engine,
+              humanYawDeg: s.humanYawDeg,
+              humanPitchDeg: s.humanPitchDeg,
+              live: s.live,
+              real: s.real,
+              age: s.age,
+              gender: s.gender,
+              emotion: s.emotion,
+            },
           });
           await new Promise((r) => setTimeout(r, 90));
         }
@@ -77,7 +91,7 @@ export default function LabPage() {
     setTestResult(null);
     setTestError(null);
     try {
-      const sampler = new FaceSampler(videoRef.current);
+      const { sampler } = await createSampler(videoRef.current);
       const cap = await collectNeutralCapture(sampler, { targetFrames: 18, maxMs: 9000 });
       if ("error" in cap) {
         setTestError(`Insufficient capture: ${cap.hint}`);
@@ -134,11 +148,27 @@ export default function LabPage() {
                 <Badge tone={Math.abs(diag.yawDeg) <= 10 ? "green" : "red"}>yaw {diag.yawDeg.toFixed(1)}°</Badge>
                 <Badge tone={Math.abs(diag.rollDeg) <= 7 ? "green" : "red"}>roll {diag.rollDeg.toFixed(1)}°</Badge>
                 <Badge tone={diag.ear > 0.18 ? "green" : "gold"}>EAR {diag.ear.toFixed(3)}</Badge>
+                {engineName && <Badge tone="cyan">engine: {engineName === "human" ? "@vladmandic/human" : "mediapipe (fallback)"}</Badge>}
               </div>
               <QualityBar label="Brightness (target ~128)" value={1 - Math.abs(diag.brightness - 128) / 128} display={diag.brightness.toFixed(0)} />
               <QualityBar label="Contrast" value={Math.min(1, diag.contrast / 60)} display={diag.contrast.toFixed(0)} />
               <QualityBar label="Sharpness (Laplacian var.)" value={Math.min(1, diag.sharpness / 500)} display={diag.sharpness.toFixed(0)} />
               <QualityBar label="Face size in frame" value={diag.faceWidthRatio >= 0.2 && diag.faceWidthRatio <= 0.85 ? 1 : 0.2} display={`${Math.round(diag.faceWidthRatio * 100)}%`} />
+              {diag.extras.live != null && (
+                <QualityBar label="Engine liveness confidence" value={diag.extras.live} display={`${Math.round(diag.extras.live * 100)}%`} />
+              )}
+              {diag.extras.real != null && (
+                <QualityBar label="Engine anti-spoof confidence" value={diag.extras.real} display={`${Math.round(diag.extras.real * 100)}%`} />
+              )}
+              {(diag.extras.age != null || diag.extras.humanYawDeg != null) && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {diag.extras.humanYawDeg != null && <Badge tone="neutral">3D yaw {diag.extras.humanYawDeg.toFixed(1)}°</Badge>}
+                  {diag.extras.humanPitchDeg != null && <Badge tone="neutral">3D pitch {diag.extras.humanPitchDeg.toFixed(1)}°</Badge>}
+                  {diag.extras.age != null && <Badge tone="neutral">est. age ~{Math.round(diag.extras.age)}</Badge>}
+                  {diag.extras.gender && <Badge tone="neutral">{diag.extras.gender}</Badge>}
+                  {diag.extras.emotion && <Badge tone="neutral">{diag.extras.emotion}</Badge>}
+                </div>
+              )}
               {diag.gateFails.length > 0 ? (
                 <p className="text-xs text-arena-red">Failing: {diag.gateFails.join(" · ")}</p>
               ) : (

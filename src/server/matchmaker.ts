@@ -36,6 +36,7 @@ export class Conn {
   blockedSet = new Set<string>();
   room: Room | null = null;
   queuedMode: BattleMode | null = null;
+  queuedAt = 0;
   friendCode: string | null = null;
   disconnectedAt: number | null = null;
 
@@ -118,6 +119,7 @@ export class Matchmaker {
       const i = q.indexOf(conn);
       if (i >= 0) q.splice(i, 1);
       conn.queuedMode = null;
+      conn.queuedAt = 0;
       if (notify) conn.send({ t: "queue_left" });
     }
     if (conn.friendCode) {
@@ -204,6 +206,7 @@ export class Matchmaker {
     this.dequeue(conn, false);
     if (mode === "friend") return; // friend mode uses codes, not the queue
     conn.queuedMode = mode;
+    conn.queuedAt = Date.now();
     this.queueFor(mode).push(conn);
     conn.send({ t: "queue_joined", mode, size: this.queueFor(mode).length });
   }
@@ -254,11 +257,17 @@ export class Matchmaker {
     return false;
   }
 
+  private ticking = false;
+
   private async tick() {
+    // Serialize ticks: pairing decisions span async boundaries, so two
+    // overlapping ticks could double-book a player (the old "glitch").
+    if (this.ticking) return;
+    this.ticking = true;
     try {
-      await this.tryMatch1v1("ranked");
-      await this.tryMatch1v1("casual");
-      await this.tryMatchDuo();
+      await this.matchAll1v1("ranked");
+      await this.matchAll1v1("casual");
+      await this.matchAllDuo();
       // prune stale friend codes
       const now = Date.now();
       for (const [code, e] of this.friendCodes) {
@@ -267,6 +276,8 @@ export class Matchmaker {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[matchmaker] tick error", err);
+    } finally {
+      this.ticking = false;
     }
   }
 
@@ -279,56 +290,94 @@ export class Matchmaker {
     return a;
   }
 
-  private async tryMatch1v1(mode: BattleMode) {
-    const q = this.queueFor(mode).filter((c) => c.ws.readyState === c.ws.OPEN && !c.room);
-    if (q.length < 2) return;
-    const shuffled = this.shuffle(q);
-    for (let i = 0; i < shuffled.length; i++) {
-      const a = shuffled[i];
-      if (a.room || !this.queueFor(mode).includes(a)) continue;
-      for (let j = i + 1; j < shuffled.length; j++) {
-        const b = shuffled[j];
-        if (b.room || !this.queueFor(mode).includes(b)) continue;
+  /** Eligible queue snapshot: connected, still queued for this mode, no room. */
+  private eligible(mode: BattleMode): Conn[] {
+    return this.queueFor(mode)
+      .filter((c) => c.ws.readyState === c.ws.OPEN && !c.room && c.queuedMode === mode)
+      .sort((a, b) => a.queuedAt - b.queuedAt); // longest wait first (fairness)
+  }
+
+  /**
+   * Batch-match 1v1 queues. Loops until no more pairs can be formed, so a
+   * queue of 10 produces 5 matches in one tick. The anchor is always the
+   * longest-waiting player; candidates are shuffled (random matchmaking).
+   * Every state is re-validated after awaits — pairing spans async gaps.
+   */
+  private async matchAll1v1(mode: BattleMode) {
+    const skipped = new Set<Conn>();
+    for (;;) {
+      const q = this.eligible(mode).filter((c) => !skipped.has(c));
+      if (q.length < 2) return;
+      const a = q[0];
+      let matched = false;
+      for (const b of this.shuffle(q.slice(1))) {
+        if (b.room || b.queuedMode !== mode) continue;
         if (await this.pairBlocked(a, b)) continue;
+        if (a.room || a.queuedMode !== mode || b.room || b.queuedMode !== mode) break; // re-check post-await
         this.dequeue(a, false);
         this.dequeue(b, false);
         await this.startRoom(mode, [a, b]);
+        matched = true;
         break;
       }
+      if (!matched) skipped.add(a); // a can't face anyone right now (cooldowns/blocks) — try next waiter
     }
   }
 
-  private async tryMatchDuo() {
-    const q = this.queueFor("duo").filter((c) => c.ws.readyState === c.ws.OPEN && !c.room);
-    if (q.length < 4) return;
-    const shuffled = this.shuffle(q);
+  /**
+   * Batch-match Random Duo (solo join → random teammate → 2v2).
+   * Forms as many teams as possible per pass (block-aware, longest wait
+   * first), then matches team-vs-team — every cross-pair must pass the
+   * anti-farm checks. Repeats until the queue can't produce another match,
+   * so 8 queued players become two simultaneous 2v2 battles in one tick.
+   */
+  private async matchAllDuo() {
+    for (;;) {
+      const q = this.eligible("duo");
+      if (q.length < 4) return;
 
-    // 1) form two solo-players-into-a-team pairs
-    const teams: Conn[][] = [];
-    const used = new Set<Conn>();
-    for (let i = 0; i < shuffled.length && teams.length < 2; i++) {
-      const a = shuffled[i];
-      if (used.has(a)) continue;
-      for (let j = i + 1; j < shuffled.length; j++) {
-        const b = shuffled[j];
-        if (used.has(b)) continue;
-        if (a.blockedSet.has(b.playerId ?? "") || b.blockedSet.has(a.playerId ?? "")) continue;
-        teams.push([a, b]);
-        used.add(a);
-        used.add(b);
-        break;
+      // greedy team formation
+      const teams: Conn[][] = [];
+      const used = new Set<Conn>();
+      for (const a of q) {
+        if (used.has(a) || a.room || a.queuedMode !== "duo") continue;
+        for (const b of q) {
+          if (b === a || used.has(b) || b.room || b.queuedMode !== "duo") continue;
+          if (a.blockedSet.has(b.playerId ?? "") || b.blockedSet.has(a.playerId ?? "")) continue;
+          teams.push([a, b]);
+          used.add(a);
+          used.add(b);
+          break;
+        }
       }
-    }
-    if (teams.length < 2) return;
+      if (teams.length < 2) return;
 
-    // 2) every cross-pairing must pass cooldown / daily-cap / block checks
-    for (const x of teams[0]) {
-      for (const y of teams[1]) {
-        if (await this.pairBlocked(x, y)) return;
+      // try to start one match this pass; outer loop will re-scan for more
+      let started = false;
+      for (let i = 0; i < teams.length && !started; i++) {
+        for (let j = i + 1; j < teams.length && !started; j++) {
+          const t1 = teams[i];
+          const t2 = teams[j];
+          let blocked = false;
+          for (const x of t1) {
+            for (const y of t2) {
+              if (await this.pairBlocked(x, y)) {
+                blocked = true;
+                break;
+              }
+            }
+            if (blocked) break;
+          }
+          if (blocked) continue;
+          const stillValid = [...t1, ...t2].every((c) => !c.room && c.queuedMode === "duo" && c.ws.readyState === c.ws.OPEN);
+          if (!stillValid) continue; // re-check post-await
+          for (const c of [...t1, ...t2]) this.dequeue(c, false);
+          await this.startRoom("duo", [...t1, ...t2]);
+          started = true;
+        }
       }
+      if (!started) return; // every team pair is blocked/cooldown'd — wait for queue changes
     }
-    for (const c of [...teams[0], ...teams[1]]) this.dequeue(c, false);
-    await this.startRoom("duo", [...teams[0], ...teams[1]]);
   }
 
   private async startRoom(mode: BattleMode, conns: Conn[]) {
@@ -586,9 +635,20 @@ export class Matchmaker {
   }
 
   private broadcastQueueStates() {
+    // defensive cleanup: drop dead sockets that missed their close event
+    for (const [, q] of this.queues) {
+      for (let i = q.length - 1; i >= 0; i--) {
+        if (q[i].ws.readyState !== q[i].ws.OPEN) {
+          q[i].queuedMode = null;
+          q.splice(i, 1);
+        }
+      }
+    }
+    const sizes: Partial<Record<BattleMode, number>> = {};
+    for (const mode of ["ranked", "casual", "duo"] as BattleMode[]) sizes[mode] = this.eligible(mode).length;
     for (const [mode, q] of this.queues) {
-      const live = q.filter((c) => c.ws.readyState === c.ws.OPEN);
-      live.forEach((c, i) => c.send({ t: "queue_state", mode, position: i + 1, size: live.length }));
+      const live = q.filter((c) => c.ws.readyState === c.ws.OPEN && c.queuedMode === mode);
+      live.forEach((c, i) => c.send({ t: "queue_state", mode, position: i + 1, size: live.length, sizes, queuedAt: c.queuedAt }));
     }
   }
 }

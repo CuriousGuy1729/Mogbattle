@@ -41,7 +41,14 @@ export default function PlayPage() {
   const [scanValidLeft, setScanValidLeft] = useState(0);
   const [scanIssuedAt, setScanIssuedAt] = useState(0);
   const [queueMode, setQueueMode] = useState<BattleMode | null>(null);
-  const [queueInfo, setQueueInfo] = useState<{ position: number; size: number } | null>(null);
+  const [queueInfo, setQueueInfo] = useState<{
+    position: number;
+    size: number;
+    sizes?: Partial<Record<BattleMode, number>>;
+    queuedAt?: number;
+  } | null>(null);
+  const [queueWait, setQueueWait] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
   const [friendCode, setFriendCode] = useState<string | null>(null);
   const [friendInput, setFriendInput] = useState("");
   const [match, setMatch] = useState<Extract<ServerMsg, { t: "match_found" }> | null>(null);
@@ -66,10 +73,19 @@ export default function PlayPage() {
           setScan(null);
           setStage("scan");
         });
-        gs.on("queue_state", (m) => setQueueInfo({ position: m.position, size: m.size }));
+        gs.on("queue_state", (m) =>
+          setQueueInfo({ position: m.position, size: m.size, sizes: m.sizes, queuedAt: m.queuedAt })
+        );
         gs.on("queue_left", () => {
           setQueueMode(null);
           setQueueInfo(null);
+        });
+        gs.on("error", (m) => {
+          setNotice(m.message);
+          setQueueMode(null);
+          setQueueInfo(null);
+          if (stageRef.current === "queue" || stageRef.current === "friend_wait") setStage("ready");
+          setTimeout(() => setNotice(null), 6000);
         });
         gs.on("friend_code", (m) => {
           setFriendCode(m.code);
@@ -116,6 +132,16 @@ export default function PlayPage() {
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
+
+  /* live "waiting" seconds while queued */
+  useEffect(() => {
+    if (stage !== "queue") return;
+    const iv = setInterval(() => {
+      setQueueWait(queueInfo?.queuedAt ? Math.max(0, Math.floor((Date.now() - queueInfo.queuedAt) / 1000)) : 0);
+    }, 1000);
+    setQueueWait(queueInfo?.queuedAt ? Math.max(0, Math.floor((Date.now() - queueInfo.queuedAt) / 1000)) : 0);
+    return () => clearInterval(iv);
+  }, [stage, queueInfo?.queuedAt]);
 
   /* scan validity countdown (display only — gate is currently optional) */
   useEffect(() => {
@@ -366,21 +392,34 @@ export default function PlayPage() {
   }
 
   if (stage === "queue") {
+    const sizes = queueInfo?.sizes;
     return (
       <div className="mx-auto max-w-md space-y-6 py-16 text-center animate-fade-up">
+        {notice && (
+          <div className="panel border-arena-red/40 bg-arena-red/10 p-3 text-sm text-arena-red">{notice}</div>
+        )}
         <div className="relative mx-auto h-24 w-24">
           <div className="absolute inset-0 animate-spin rounded-full border-2 border-white/10 border-t-gold-500" style={{ animationDuration: "1.6s" }} />
           <div className="absolute inset-3 animate-spin rounded-full border-2 border-white/10 border-b-gold-500/60" style={{ animationDuration: "2.4s" }} />
         </div>
         <div>
-          <h2 className="text-xl font-bold">Searching for verified opponents…</h2>
+          <h2 className="text-xl font-bold">Searching for opponents…</h2>
           <p className="mt-1 text-sm text-white/50">
-            {queueMode === "duo" ? "Forming a random duo, then matching another pair." : "Random matchmaking · rematch cooldowns enforced."}
+            {queueMode === "duo"
+              ? "Auto-teaming you with a random partner, then matching another duo."
+              : "Random matchmaking · longest wait matched first · rematch cooldowns enforced."}
           </p>
           {queueInfo && (
             <p className="mt-2 font-mono text-xs text-white/40">
-              position {queueInfo.position} · {queueInfo.size} in queue
+              position {queueInfo.position} · {queueInfo.size} in queue · waiting {queueWait}s
             </p>
+          )}
+          {sizes && (
+            <div className="mt-3 flex justify-center gap-4 font-mono text-[11px] text-white/40">
+              <span>ranked <b className="text-gold-400">{sizes.ranked ?? 0}</b></span>
+              <span>casual <b className="text-arena-cyan">{sizes.casual ?? 0}</b></span>
+              <span>duo <b className="text-arena-violet">{sizes.duo ?? 0}</b></span>
+            </div>
           )}
         </div>
         <button className="btn-ghost" onClick={leaveQueue}>Leave queue</button>

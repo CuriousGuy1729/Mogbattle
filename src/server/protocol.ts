@@ -46,7 +46,14 @@ export type ServerMsg =
   | { t: "pong"; c: number; serverTime: number }
   | { t: "error"; code: string; message: string }
   | { t: "queue_joined"; mode: BattleMode; size: number }
-  | { t: "queue_state"; mode: BattleMode; position: number; size: number }
+  | {
+      t: "queue_state";
+      mode: BattleMode;
+      position: number;
+      size: number;
+      sizes?: Partial<Record<BattleMode, number>>;
+      queuedAt?: number;
+    }
   | { t: "queue_left" }
   | { t: "friend_code"; code: string }
   | { t: "friend_waiting" }
