@@ -83,6 +83,74 @@ npm run start
 See `.env.example` for all tuning knobs (confidence threshold, scan TTL,
 rematch cooldown, daily pair cap, K-factor).
 
+## Running on GitHub Codespaces
+
+The repo ships a devcontainer — zero setup:
+
+1. GitHub → this repo → **Code ▸ Codespaces ▸ Create codespace** (on any branch).
+2. Wait for `npm install && npm run build` to finish; the server then starts
+   automatically and port 3000 opens as a preview (`*.app.github.dev`, HTTPS).
+3. The preview is a secure context, so **camera + mic work** — open the
+   forwarded URL in **two browser tabs** to test a real match against yourself.
+4. Editing code? Run `npm run dev` instead of `npm run start` for hot reload.
+
+If a codespace was stopped and restarted, run `npm run start` again (or let
+the devcontainer's post-attach hook do it).
+
+## Deployment
+
+### One process (recommended to start)
+
+Everything — pages, API, matchmaking, signaling — runs in one Node process,
+so any host that runs a long-lived Node server works out of the box:
+
+| Host | How |
+|---|---|
+| **Railway / Render / Fly.io** | Detects the repo automatically (or use the included `Dockerfile`). Set `PORT`/`HOST` if needed. |
+| **VPS** | `npm ci && npm run build && npm run start` behind nginx/caddy with TLS. |
+| **Docker** | `docker build -t mogbattle . && docker run -p 3000:3000 mogbattle` |
+
+Add `DATABASE_URL` (PostgreSQL) and `REDIS_URL` when you want durable,
+multi-instance storage — see `docker-compose.yml` and `.env.example`.
+
+### Deploying on Vercel — read this first
+
+Vercel's Next.js hosting runs your code as **serverless functions**: no custom
+servers, no long-lived processes, and (historically) no WebSockets. Mogbattle's
+matchmaking + signaling hub is a stateful WebSocket server, so the single-process
+mode **does not run on Vercel as-is**. The supported split:
+
+```
+┌────────────── Vercel ──────────────┐   ┌── Railway/Render/Fly (always-on) ──┐
+│ Next.js UI + /api/* HTTP routes    │   │ npm run realtime                    │
+│ (pages, scans verify, leaderboards)│◄──┤ WebSocket hub: matchmaking, rooms,  │
+│                                    │   │ signaling (/ws), clock sync         │
+└──────────────┬─────────────────────┘   └──────────────┬─────────────────────┘
+               │            same DATABASE_URL           │
+               └────────────► Neon Postgres ◄───────────┘
+                        (Upstash Redis optional)
+```
+
+Steps:
+
+1. **Database**: create a Postgres DB (Vercel ⇄ Neon integration, or any
+   provider). Note: Vercel's filesystem is ephemeral, so the embedded store
+   will not persist there — `DATABASE_URL` is required for Vercel.
+2. **Realtime hub**: deploy this repo to Railway/Render/Fly with start
+   command `npm run realtime` and the same `DATABASE_URL`. Give it a public
+   HTTPS URL, e.g. `wss://mogbattle-realtime.up.railway.app`.
+3. **Vercel**: import the repo (Next.js preset). Set environment variables:
+   - `DATABASE_URL` → the shared Postgres
+   - `REDIS_URL` → Upstash (optional; the limiter falls back to memory)
+   - `NEXT_PUBLIC_WS_URL` → your realtime hub origin (client appends `/ws`)
+4. Deploy. The UI/API run serverless on Vercel; matchmaking, the VS screen,
+   countdown sync and WebRTC signaling flow through the hub. The video itself
+   is peer-to-peer between browsers and never touches either server.
+
+Notes: WebRTC works from any hosting (it's browser-to-browser). If you'd
+rather keep one process, choose any host from the table above instead of
+Vercel — that's the simplest production path.
+
 ## Testing
 
 `scripts/e2e.ts` drives the full pipeline headlessly — sessions, scan

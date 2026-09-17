@@ -26,8 +26,12 @@ export class GameSocket {
   connect(token: string): Promise<void> {
     this.closedByUser = false;
     return new Promise((resolve, reject) => {
+      // Same-origin by default. For split deployments (e.g. frontend on Vercel)
+      // set NEXT_PUBLIC_WS_URL to the realtime hub's origin.
+      const external = process.env.NEXT_PUBLIC_WS_URL;
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      const url = external ? `${external.replace(/\/$/, "")}/ws` : `${proto}://${location.host}/ws`;
+      const ws = new WebSocket(url);
       this.ws = ws;
       this.onStatus("connecting");
       let settled = false;
