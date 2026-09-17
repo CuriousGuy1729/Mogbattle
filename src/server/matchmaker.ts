@@ -18,6 +18,14 @@ import { TIMING, type BattleMode, type PublicPlayer, type ServerMsg } from "./pr
 import type { BattleAttestation } from "@/lib/psl/types";
 
 export const scanTtlMs = () => (parseInt(process.env.SCAN_TTL_MINUTES || "60", 10) || 60) * 60_000;
+
+/**
+ * Verification gate. Currently OPTIONAL ("for now") so players can test
+ * matchmaking/battles immediately; battle captures are still scored by the
+ * same pinned pipeline. Flip to "true" to require a certified scan again.
+ */
+export const requireVerifiedScan = () =>
+  (process.env.REQUIRE_VERIFIED_SCAN ?? "false").trim().toLowerCase() === "true";
 const rematchCooldownMs = () => (parseInt(process.env.REMATCH_COOLDOWN_MINUTES || "30", 10) || 30) * 60_000;
 const maxDailyPair = () => parseInt(process.env.MAX_DAILY_PAIR_MATCHES || "3", 10) || 3;
 
@@ -178,6 +186,7 @@ export class Matchmaker {
     const store = getStore();
     if (!conn.playerId) return { ok: false, message: "not signed in" };
     if (conn.room) return { ok: false, message: "already in a match" };
+    if (!requireVerifiedScan()) return { ok: true }; // verification temporarily optional
     const scan = await store.latestScan(conn.playerId);
     if (!scan) return { ok: false, message: "A verified face scan is required before entering any queue." };
     const age = Date.now() - Date.parse(scan.createdAt);

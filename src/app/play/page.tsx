@@ -3,7 +3,7 @@
  * The Arena: consent → verification scan → mode select → randomized queue →
  * P2P battle → reveal → repeat. One camera stream powers scan and battle.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ensureSession, api, type MyPlayer } from "@/lib/client/session";
@@ -117,25 +117,30 @@ export default function PlayPage() {
     };
   }, []);
 
-  /* scan validity countdown */
+  /* scan validity countdown (display only — gate is currently optional) */
   useEffect(() => {
     if (!scan) return;
     const iv = setInterval(() => {
       const left = (scan.validForMs ?? 0) - (Date.now() - scanIssuedAt);
       setScanValidLeft(Math.max(0, left));
-      if (left <= 0 && stageRef.current === "ready") setStage("scan");
     }, 1000);
     return () => clearInterval(iv);
   }, [scan, scanIssuedAt]);
 
-  const onConsent = useCallback(async () => {
-    setStage("camera");
+  async function ensureCamera(): Promise<MediaStream | null> {
+    if (streamRef.current?.active) return streamRef.current;
     try {
-      if (!streamRef.current || !streamRef.current.active) streamRef.current = await openCamera();
-      setStage("scan");
+      streamRef.current = await openCamera();
+      return streamRef.current;
     } catch {
-      setStage("scan"); // wizard will surface the precise permission error
+      return null;
     }
+  }
+
+  const onConsent = useCallback(async () => {
+    // Camera is best-effort here — battles open it again if needed.
+    void (await ensureCamera());
+    setStage("ready");
   }, []);
 
   const onVerified = useCallback((s: VerifiedScan) => {
@@ -145,9 +150,10 @@ export default function PlayPage() {
     setStage("ready");
   }, []);
 
-  function joinQueue(mode: BattleMode) {
+  async function joinQueue(mode: BattleMode) {
     const gs = socketRef.current;
     if (!gs) return;
+    await ensureCamera(); // warm the camera while the queue searches
     setQueueMode(mode);
     setQueueInfo(null);
     gs.send({ t: "queue_join", mode });
@@ -163,15 +169,20 @@ export default function PlayPage() {
 
   function createFriend() {
     setFriendCode(null);
+    void ensureCamera();
     socketRef.current?.send({ t: "friend_create" });
   }
 
-  function joinFriend() {
+  async function joinFriend() {
     if (!/^\d{6}$/.test(friendInput)) return;
+    await ensureCamera();
     setQueueMode("friend");
     socketRef.current?.send({ t: "queue_join", mode: "friend", friendCode: friendInput });
     setStage("queue");
   }
+
+  // Fallback stream for browsers where the camera never came up (SSR-safe: MediaStream is browser-only).
+  const emptyStream = useMemo(() => (typeof MediaStream !== "undefined" ? new MediaStream() : null), []);
 
   /* ── render ─────────────────────────────────────────────────────────── */
 
@@ -237,10 +248,11 @@ export default function PlayPage() {
     );
   }
 
-  if (stage === "ready" && scan) {
+  if (stage === "ready") {
     return (
       <div className="space-y-6 py-8 animate-fade-up">
-        {/* verified score card */}
+        {/* score card — certified scan, or uncertified notice */}
+        {scan ? (
         <div className="panel relative overflow-hidden p-6">
           <div className="absolute inset-0 bg-grid opacity-40" />
           <div className="relative grid gap-6 md:grid-cols-[auto_1fr]">
@@ -271,6 +283,30 @@ export default function PlayPage() {
             <button className="btn-ghost !px-3 !py-2 text-xs" onClick={() => setStage("scan")}>Rescan</button>
           </div>
         </div>
+        ) : (
+        <div className="panel relative overflow-hidden p-6">
+          <div className="bg-grid absolute inset-0 opacity-40" />
+          <div className="relative flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="label-tech">Verification · temporarily optional</div>
+              <h2 className="mt-1 text-xl font-bold">Jump straight into the arena</h2>
+              <p className="mt-1 max-w-xl text-sm text-white/50">
+                The mandatory face-verification scan is switched off for testing. Every match still scores your live
+                capture with the same pinned pipeline. Run the verification scan anytime to certify your profile PSL.
+              </p>
+            </div>
+            <button
+              className="btn-gold"
+              onClick={async () => {
+                await ensureCamera();
+                setStage("scan");
+              }}
+            >
+              Run verification scan
+            </button>
+          </div>
+        </div>
+        )}
 
         {/* mode select */}
         <div>
@@ -358,11 +394,10 @@ export default function PlayPage() {
         socket={socketRef.current!}
         match={match}
         myId={me.id}
-        stream={streamRef.current!}
+        stream={(streamRef.current ?? emptyStream)!}
         onExit={() => {
           setMatch(null);
-          if (scanValidLeft > 0) setStage("ready");
-          else setStage("scan");
+          setStage("ready");
         }}
       />
     );

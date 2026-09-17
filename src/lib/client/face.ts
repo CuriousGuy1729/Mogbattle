@@ -49,20 +49,23 @@ export interface FrameSample {
  * - brightness / contrast: mean & std-dev of luminance over the face crop
  * - sharpness: Laplacian variance on a 96×96 grayscale face crop
  *   (blur / out-of-focus / heavily compressed replay footage scores low)
+ *
+ * NOTE: the crop is drawn directly from the video element. `drawImage` does
+ * NOT accept ImageData — drawing from getImageData output crashes with
+ * "The provided value is not of type CanvasImageSource".
  */
 function analyzeCrop(
   ctx: CanvasRenderingContext2D,
-  img: ImageData,
-  canvasW: number,
+  video: HTMLVideoElement,
   box: { x: number; y: number; w: number; h: number }
 ): { brightness: number; contrast: number; sharpness: number } {
   const S = 96;
-  const sx = Math.max(0, Math.floor(box.x));
-  const sy = Math.max(0, Math.floor(box.y));
-  const sw = Math.max(8, Math.min(Math.floor(box.w), canvasW - sx));
-  const sh = Math.max(8, Math.floor(box.h));
+  const sx = Math.max(0, Math.min(video.videoWidth - 8, Math.floor(box.x)));
+  const sy = Math.max(0, Math.min(video.videoHeight - 8, Math.floor(box.y)));
+  const sw = Math.max(8, Math.min(Math.floor(box.w), video.videoWidth - sx));
+  const sh = Math.max(8, Math.min(Math.floor(box.h), video.videoHeight - sy));
   ctx.clearRect(0, 0, S, S);
-  ctx.drawImage(img as unknown as CanvasImageSource, sx, sy, sw, sh, 0, 0, S, S);
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, S, S);
   const small = ctx.getImageData(0, 0, S, S);
   const d = small.data;
   const gray = new Float32Array(S * S);
@@ -140,21 +143,9 @@ export class FaceSampler {
     const pose = estimateHeadPose(lm);
     const ear = eyeAspectToRatio(lm);
 
-    // Downscale for image analysis.
-    const targetW = 480;
-    const scale = targetW / this.video.videoWidth;
-    const w = Math.round(this.video.videoWidth * scale);
-    const h = Math.round(this.video.videoHeight * scale);
-    if (this.canvas.width !== w || this.canvas.height !== h) {
-      this.canvas.width = w;
-      this.canvas.height = h;
-    }
-    this.ctx.drawImage(this.video, 0, 0, w, h);
-    let img: ImageData;
-    try {
-      img = this.ctx.getImageData(0, 0, w, h);
-    } catch {
-      return { ...fail, faceCount, landmarks: lm, gateFails: ["canvas blocked"] };
+    if (this.canvas.width !== 96 || this.canvas.height !== 96) {
+      this.canvas.width = 96;
+      this.canvas.height = 96;
     }
 
     const xs = lm.map((p) => p.x);
@@ -164,13 +155,22 @@ export class FaceSampler {
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
     const faceWidthRatio = maxX - minX;
+    // Face crop box in VIDEO pixel coordinates (drawImage source space).
+    const pad = 0.12;
     const box = {
-      x: minX * w - (maxX - minX) * w * 0.1,
-      y: minY * h - (maxY - minY) * h * 0.15,
-      w: (maxX - minX) * w * 1.2,
-      h: (maxY - minY) * h * 1.3,
+      x: (minX - (pad / 2) * (maxX - minX)) * this.video.videoWidth,
+      y: (minY - (pad / 2) * (maxY - minY)) * this.video.videoHeight,
+      w: (maxX - minX) * (1 + pad) * this.video.videoWidth,
+      h: (maxY - minY) * (1 + pad) * this.video.videoHeight,
     };
-    const { brightness, contrast, sharpness } = analyzeCrop(this.ctx, img, w, box);
+    let brightness = 128;
+    let contrast = 40;
+    let sharpness = FRAME_GATES.minSharpness + 1;
+    try {
+      ({ brightness, contrast, sharpness } = analyzeCrop(this.ctx, this.video, box));
+    } catch {
+      return { ...fail, faceCount, landmarks: lm, gateFails: ["canvas blocked"] };
+    }
 
     const gateFails: string[] = [];
     if (Math.abs(pose.yawDeg) > FRAME_GATES.maxYawDeg) gateFails.push("face not frontal");
