@@ -10,6 +10,8 @@ import { MeshRTC, type SignalPayload } from "@/lib/client/webrtc";
 import { createSampler } from "@/lib/client/engine";
 import { buildAttestation, collectNeutralCapture } from "@/lib/client/attest";
 import { api } from "@/lib/client/session";
+import PslReport from "./PslReport";
+import type { PslResult } from "@/lib/psl/types";
 import { Badge, CountUp, Modal } from "./ui";
 
 type MatchFound = Extract<ServerMsg, { t: "match_found" }>;
@@ -36,6 +38,8 @@ export default function BattleRoom({
   const [submitState, setSubmitState] = useState<"idle" | "submitted" | "failed">("idle");
   const [failMsg, setFailMsg] = useState<string | null>(null);
   const [result, setResult] = useState<MatchResult | null>(null);
+  const [myRating, setMyRating] = useState<PslResult | null>(null);
+  const [showMyRating, setShowMyRating] = useState(false);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [peerDown, setPeerDown] = useState<Record<string, boolean>>({});
   const [reportTarget, setReportTarget] = useState<string | null>(null);
@@ -164,6 +168,7 @@ export default function BattleRoom({
         setPhase("await");
         return;
       }
+      setMyRating(outcome.result);
       socket.send({ t: "battle_score", attestation: outcome.attestation });
       setPhase("await");
     })();
@@ -261,6 +266,23 @@ export default function BattleRoom({
             );
           })}
         </div>
+
+        {myRating && result.status === "done" && (
+          <div className="space-y-3">
+            <button className="btn-ghost w-full !py-2 text-xs" onClick={() => setShowMyRating((v) => !v)}>
+              {showMyRating ? "Hide" : "Show"} my PSL rating breakdown
+            </button>
+            {showMyRating && (
+              <PslReport
+                score={myRating.score}
+                confidence={myRating.confidence}
+                version={myRating.version}
+                groups={myRating.groups}
+                compact
+              />
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center justify-center gap-3">
           <button className="btn-gold" onClick={onExit}>

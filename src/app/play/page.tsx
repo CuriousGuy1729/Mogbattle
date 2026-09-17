@@ -11,7 +11,9 @@ import { openCamera } from "@/lib/client/face";
 import { GameSocket } from "@/lib/client/wsClient";
 import ScanWizard, { type VerifiedScan } from "@/components/ScanWizard";
 import BattleRoom from "@/components/BattleRoom";
-import { Badge, ConfidenceBar, QualityBar, Spinner } from "@/components/ui";
+import PslReport from "@/components/PslReport";
+import { groupsFromComponents } from "@/lib/psl/report";
+import { Badge, Spinner } from "@/components/ui";
 import type { BattleMode, ServerMsg } from "@/server/protocol";
 
 type Stage =
@@ -277,35 +279,23 @@ export default function PlayPage() {
   if (stage === "ready") {
     return (
       <div className="space-y-6 py-8 animate-fade-up">
-        {/* score card — certified scan, or uncertified notice */}
+        {/* score card — certified scan rater report, or uncertified notice */}
         {scan ? (
-        <div className="panel relative overflow-hidden p-6">
-          <div className="absolute inset-0 bg-grid opacity-40" />
-          <div className="relative grid gap-6 md:grid-cols-[auto_1fr]">
-            <div className="text-center md:text-left">
-              <div className="label-tech">PSL SCORE · certified</div>
-              <div className="mt-1 font-mono text-6xl font-black text-gradient-gold">
-                {scan.psl.toFixed(2)}
-                <span className="text-2xl text-white/40"> /10</span>
-              </div>
-              <div className="mt-2 flex flex-wrap justify-center gap-2 md:justify-start">
-                <Badge tone="gold">{scan.version}</Badge>
-                <Badge tone="green">liveness verified</Badge>
-                <Badge tone="neutral">expires in {Math.floor(scanValidLeft / 60000)}:{String(Math.floor((scanValidLeft % 60000) / 1000)).padStart(2, "0")}</Badge>
-              </div>
+        <div className="space-y-4">
+          <PslReport
+            score={scan.psl}
+            confidence={scan.confidence}
+            version={scan.version}
+            groups={groupsFromComponents(scan.components)}
+          />
+          <div className="panel flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="green">liveness verified</Badge>
+              <Badge tone="neutral">
+                expires in {Math.floor(scanValidLeft / 60000)}:{String(Math.floor((scanValidLeft % 60000) / 1000)).padStart(2, "0")}
+              </Badge>
+              <Badge tone="neutral">{scan.components && Object.keys(scan.components).length} pinned components</Badge>
             </div>
-            <div className="grid content-center gap-3 sm:grid-cols-2">
-              <ConfidenceBar value={scan.confidence} />
-              <QualityBar label="Sharpness" value={Math.min(1, scan.quality.sharpness / 500)} display={`${scan.quality.sharpness}`} />
-              <QualityBar label="Lighting" value={1 - Math.abs(scan.quality.brightness - 128) / 128} display={`${scan.quality.brightness} lum`} />
-              <QualityBar label="Stability" value={1 - Math.min(1, scan.quality.stability / 0.012)} display={`${scan.quality.stability}`} />
-            </div>
-          </div>
-          <div className="relative mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-4">
-            <p className="text-xs text-white/40">
-              Score derived from {Object.keys(scan.components).length} pinned geometric components · capture digest recorded ·{" "}
-              <Link href="/methodology" className="text-gold-400 underline-offset-2 hover:underline">how this is calculated</Link>
-            </p>
             <button className="btn-ghost !px-3 !py-2 text-xs" onClick={() => setStage("scan")}>Rescan</button>
           </div>
         </div>

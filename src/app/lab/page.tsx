@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from "react";
 import { openCamera } from "@/lib/client/face";
 import { createSampler, type EngineExtras } from "@/lib/client/engine";
 import { buildAttestation, collectNeutralCapture } from "@/lib/client/attest";
+import { extraReads } from "@/lib/psl/metrics";
+import PslReport from "@/components/PslReport";
 import { QualityBar, Badge } from "@/components/ui";
 import type { PslResult } from "@/lib/psl/types";
 
@@ -31,6 +33,7 @@ export default function LabPage() {
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testResult, setTestResult] = useState<PslResult | null>(null);
+  const [testExtras, setTestExtras] = useState<{ fwHR?: number | null }>({});
   const [testError, setTestError] = useState<string | null>(null);
   const [camError, setCamError] = useState<string | null>(null);
   const [engineName, setEngineName] = useState<"human" | "mediapipe" | null>(null);
@@ -66,9 +69,6 @@ export default function LabPage() {
               humanPitchDeg: s.humanPitchDeg,
               live: s.live,
               real: s.real,
-              age: s.age,
-              gender: s.gender,
-              emotion: s.emotion,
             },
           });
           await new Promise((r) => setTimeout(r, 90));
@@ -102,6 +102,7 @@ export default function LabPage() {
         setTestError(`${outcome.reason} ${outcome.hint}`);
         return;
       }
+      setTestExtras(extraReads(cap.frames));
       setTestResult(outcome.result);
     } finally {
       setBusy(false);
@@ -160,13 +161,10 @@ export default function LabPage() {
               {diag.extras.real != null && (
                 <QualityBar label="Engine anti-spoof confidence" value={diag.extras.real} display={`${Math.round(diag.extras.real * 100)}%`} />
               )}
-              {(diag.extras.age != null || diag.extras.humanYawDeg != null) && (
+              {diag.extras.humanYawDeg != null && (
                 <div className="flex flex-wrap gap-2 pt-1">
-                  {diag.extras.humanYawDeg != null && <Badge tone="neutral">3D yaw {diag.extras.humanYawDeg.toFixed(1)}°</Badge>}
+                  <Badge tone="neutral">3D yaw {diag.extras.humanYawDeg.toFixed(1)}°</Badge>
                   {diag.extras.humanPitchDeg != null && <Badge tone="neutral">3D pitch {diag.extras.humanPitchDeg.toFixed(1)}°</Badge>}
-                  {diag.extras.age != null && <Badge tone="neutral">est. age ~{Math.round(diag.extras.age)}</Badge>}
-                  {diag.extras.gender && <Badge tone="neutral">{diag.extras.gender}</Badge>}
-                  {diag.extras.emotion && <Badge tone="neutral">{diag.extras.emotion}</Badge>}
                 </div>
               )}
               {diag.gateFails.length > 0 ? (
@@ -182,47 +180,18 @@ export default function LabPage() {
       </div>
 
       {testResult && (
-        <div className="panel space-y-5 p-6 animate-fade-up">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <div className="label-tech">TEST SCORE · not stored</div>
-              <div className="font-mono text-5xl font-black text-gradient-gold">
-                {testResult.score.toFixed(2)}<span className="text-xl text-white/40"> /10</span>
-              </div>
-              <div className="mt-1 flex gap-2">
-                <Badge tone="gold">{testResult.version}</Badge>
-                <Badge tone="neutral">confidence {(testResult.confidence * 100).toFixed(0)}%</Badge>
-              </div>
-            </div>
-            <p className="max-w-sm text-xs text-white/40">
-              Every group below is a weighted bundle of standardized geometric deviations from pinned reference
-              values. Identical input produces an identical output — rerun the test to verify reproducibility.
-            </p>
+        <div className="animate-fade-up space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="label-tech">TEST RATING · computed on-device · never stored</div>
+            <Badge tone="neutral">rerun to verify reproducibility</Badge>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {testResult.groups.map((g) => (
-              <div key={g.key} className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold">{g.label}</span>
-                  <span className="font-mono font-bold text-gold-400">{g.score.toFixed(2)}</span>
-                </div>
-                <div className="mt-1 text-[10px] text-white/35">weight {(g.weight * 100).toFixed(0)}%</div>
-                <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full bg-gold-500" style={{ width: `${g.score * 10}%` }} />
-                </div>
-                <ul className="mt-3 space-y-1 text-[11px] text-white/50">
-                  {g.metrics.map((m) => (
-                    <li key={m.key} className="flex justify-between gap-2">
-                      <span className="truncate">{m.label}</span>
-                      <span className="font-mono shrink-0">
-                        {m.value.toFixed(3)} <span className="text-white/30">(ref {m.refMean})</span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
+          <PslReport
+            score={testResult.score}
+            confidence={testResult.confidence}
+            version={testResult.version}
+            groups={testResult.groups}
+            extras={testExtras}
+          />
         </div>
       )}
       {testError && (

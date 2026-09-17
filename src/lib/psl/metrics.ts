@@ -1,5 +1,5 @@
 import type { Landmarks } from "./types";
-import { alignFace, dist, type AlignedFace } from "./geometry";
+import { alignFace, dist, stabilizeFrames, type AlignedFace } from "./geometry";
 import { LM, SYMMETRY_PAIRS } from "./landmarks";
 
 export interface ComputedMetrics {
@@ -17,6 +17,8 @@ export interface ComputedMetrics {
   eyeLineOfFace: number;
   browEyeSpacing: number;
   asymmetryIndex: number;
+  /** INFORMATIONAL ONLY — classic facial width-to-height ratio. Never scored. */
+  fwHR: number;
 }
 
 const EPS = 1e-6;
@@ -117,10 +119,24 @@ export function computeMetrics(stabilized: Landmarks): { metrics: ComputedMetric
     eyeLineOfFace,
     browEyeSpacing,
     asymmetryIndex,
+    // Display-only looksmaxxing readout (bizygomatic width ÷ face height).
+    // Deliberately NOT in METRIC_SPECS, so it never influences the score.
+    fwHR: faceW / faceHeight,
   };
 
   for (const v of Object.values(metrics)) {
     if (!Number.isFinite(v)) return null;
   }
   return { metrics, aligned: { pts, ipd: 1 } };
+}
+
+/** Display-only extra readouts (not part of the scored model). */
+export function extraReads(frames: Landmarks[]): { fwHR: number | null } {
+  try {
+    const median = stabilizeFrames(frames);
+    const computed = computeMetrics(median);
+    return { fwHR: computed ? computed.metrics.fwHR : null };
+  } catch {
+    return { fwHR: null };
+  }
 }

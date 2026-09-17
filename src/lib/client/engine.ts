@@ -8,7 +8,9 @@
  *    topology as the MediaPipe FaceMesh indices used by the scoring layer
  *  - true 3D head rotation (roll / yaw / pitch)
  *  - built-in LIVENESS and ANTI-SPOOF confidence models
- *  - age / gender / emotion attributes (display only — never used for scoring)
+ *
+ * The engine measures geometry. It never "rates" — the PSL /10 score comes
+ * exclusively from the pinned deterministic ratio pipeline (src/lib/psl).
  *
  * The deterministic PSL scoring layer stays on top of the engine's landmarks:
  * pinned constants, reproducible math, no black-box rating.
@@ -42,8 +44,8 @@ function buildConfig(backend: "wasm" | "webgl") {
       detector: { enabled: true, maxDetected: 2, rotation: false },
       mesh: { enabled: true },
       iris: { enabled: true },
-      description: { enabled: true }, // age + gender (faceres)
-      emotion: { enabled: true },
+      description: { enabled: false }, // age/gender not part of the rater — keep it lean
+      emotion: { enabled: false },
       antispoof: { enabled: true },
       liveness: { enabled: true },
     },
@@ -82,9 +84,6 @@ export interface EngineExtras {
   humanPitchDeg?: number;
   live?: number; // engine liveness confidence
   real?: number; // engine anti-spoof confidence
-  age?: number;
-  gender?: string;
-  emotion?: string;
 }
 
 export interface Sampler {
@@ -144,9 +143,6 @@ export class HumanSampler implements Sampler {
       humanPitchDeg: rot?.pitch,
       live: f.live,
       real: f.real,
-      age: f.age,
-      gender: f.gender,
-      emotion: f.emotion?.[0]?.emotion,
     };
 
     // Delegate EAR + signed pose + quality gates to the shared sampler math.
